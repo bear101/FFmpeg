@@ -199,6 +199,7 @@ OBJS-$(CONFIG_SSA_DECODER)             += assdec.o ass.o
 OBJS-$(CONFIG_SSA_ENCODER)             += assenc.o ass.o
 OBJS-$(CONFIG_ASS_DECODER)             += assdec.o ass.o
 OBJS-$(CONFIG_ASS_ENCODER)             += assenc.o ass.o
+OBJS-$(CONFIG_ASTERIX_DECODER)         += asterix.o
 OBJS-$(CONFIG_ASV1_DECODER)            += asvdec.o asv.o mpeg12data.o
 OBJS-$(CONFIG_ASV1_ENCODER)            += asvenc.o asv.o mpeg12data.o
 OBJS-$(CONFIG_ASV2_DECODER)            += asvdec.o asv.o mpeg12data.o
