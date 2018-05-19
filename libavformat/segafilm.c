@@ -204,17 +204,12 @@ static int film_read_header(AVFormatContext *s)
     if (!film->sample_table)
         return AVERROR(ENOMEM);
 
-    
     for (i = 0; i < s->nb_streams; i++) {
         st = s->streams[i];
-        av_log(s, AV_LOG_INFO, "Init %g, stream %d\n",
-               av_q2d(st->time_base), i);
         if (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO)
             avpriv_set_pts_info(st, 33, 1, film->base_clock);
         else
             avpriv_set_pts_info(st, 64, 1, film->audio_samplerate);
-        av_log(s, AV_LOG_INFO, "Post init %g, stream %d\n",
-               av_q2d(st->time_base), i);
     }
 
     audio_frame_counter = video_frame_counter = 0;
