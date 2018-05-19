@@ -21,59 +21,45 @@
  */
 
 #include "asterix.h"
-#include <libavutil/rational.h>
-#include <string.h>
 
-/* const AVCodecTag ff_codec_asterix_tags[] = { */
-/*     { AV_CODEC_ID_CAT240,            0 }, */
-/*     { AV_CODEC_ID_NONE,               0 }, */
-/* }; */
+const AVCodecTag ff_codec_asterix_tags[] = {
+    { AV_CODEC_ID_ASTERIX,            0 },
+    { AV_CODEC_ID_NONE,               0 },
+};
 
 static int asterix_probe(AVProbeData *p)
 {
-    if (p->filename && strstr(p->filename, ".asterix"))
-        return AVPROBE_SCORE_MAX;
-    return 0;
+    return AVPROBE_SCORE_MAX;
 }
 
 static int asterix_read_header(AVFormatContext *s)
 {
     AVStream *st;
-    AVIOContext *pb = s->pb;
-    AVRational fps = {1, 30};
 
     st = avformat_new_stream(s, NULL);
     if (!st)
         return AVERROR(ENOMEM);
 
     st->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
-    st->codecpar->width = 1024;
-    st->codecpar->height = 1024;
-    st->codecpar->codec_id = AV_CODEC_ID_CAT240;
-    st->codecpar->format = AV_PIX_FMT_RGB32;
-    st->time_base = fps;
-    st->start_time = 0;
-    st->duration = 0;
-    av_log(s, AV_LOG_INFO, "opening asterix file. Stream index %d\n", st->index);
+    st->codecpar->width         = 1024;
+    st->codecpar->height        = 1024;
+    st->codecpar->codec_id   = AV_CODEC_ID_ASTERIX;
+
+    
 
     return 0;
 }
-
-int cc = 0;
 
 static int asterix_read_packet(AVFormatContext *s, AVPacket *pkt)
 {
     int ret;
 
-    ret = av_get_packet(s->pb, pkt, 0x1000);
-    if (ret != 0x1000)
-        ret = AVERROR_EOF;
-    pkt->stream_index = 0;
-    pkt->pts = cc;
-    pkt->dts = cc++;
-    pkt->duration = 1;
+    ret = av_get_packet(s->pb, pkt, s->streams[0]->codecpar->width *
+                        s->streams[0]->codecpar->height * 4);
+    pkt->pos++;
 
-    s->streams[pkt->stream_index]->duration++;
+    if (pkt->pos == 1000)
+        ret = AVERROR_EOF;
     
     return ret;
 }
@@ -86,5 +72,5 @@ AVInputFormat ff_asterix_demuxer = {
     .read_packet    = asterix_read_packet,
     .extensions     = "asterix",
     .flags          = AVFMT_GENERIC_INDEX,
-    /* .codec_tag      = (const AVCodecTag* const []){ff_codec_asterix_tags, 0}, */
+    .codec_tag      = (const AVCodecTag* const []){ff_codec_asterix_tags, 0},
 };

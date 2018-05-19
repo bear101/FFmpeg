@@ -20,11 +20,25 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#ifndef AVFORMAT_ASTERIX_H
-#define AVFORMAT_ASTERIX_H
+#include "avcodec.h"
 
-#include "internal.h"
+static int asterix_decode_frame(AVCodecContext *avctx,
+                                void *data, int *got_frame,
+                                AVPacket *avpkt)
+{
+    int ret;
+    const uint8_t *buf = avpkt->data;
+    int buf_size       = avpkt->size;
 
-extern const AVCodecTag ff_codec_asterix_tags[];
+    ret = ff_set_dimensions(avctx, w, h);
+    avctx->pix_fmt = AV_PIX_FMT_ARGB;
+}
 
-#endif /* AVFORMAT_ASTERIX_H */
+AVCodec ff_asterix_decoder = {
+    .name           = "asterix",
+    .long_name      = NULL_IF_CONFIG_SMALL("ASTERIX Radar Video (Eurocontrol Category 240)"),
+    .type           = AVMEDIA_TYPE_VIDEO,
+    .id             = AV_CODEC_ID_ASTERIX,
+    .decode         = asterix_decode_frame,
+    .capabilities   = AV_CODEC_CAP_DR1,
+};
