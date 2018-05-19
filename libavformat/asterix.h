@@ -25,6 +25,6 @@
 
 #include "internal.h"
 
-extern const AVCodecTag ff_codec_asterix_tags[];
+// extern const AVCodecTag ff_codec_asterix_tags[];
 
 #endif /* AVFORMAT_ASTERIX_H */

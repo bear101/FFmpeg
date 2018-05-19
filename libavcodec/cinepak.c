@@ -446,6 +446,8 @@ static int cinepak_decode_frame(AVCodecContext *avctx,
     CinepakContext *s = avctx->priv_data;
     int num_strips;
 
+    av_log(avctx, AV_LOG_INFO, "decoding...\n");
+    
     s->data = buf;
     s->size = buf_size;
 
