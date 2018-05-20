@@ -22,12 +22,19 @@
 
 #include "asterix.h"
 #include <libavutil/rational.h>
+#include <libavutil/intreadwrite.h>
 #include <string.h>
 
-/* const AVCodecTag ff_codec_asterix_tags[] = { */
-/*     { AV_CODEC_ID_CAT240,            0 }, */
-/*     { AV_CODEC_ID_NONE,               0 }, */
-/* }; */
+/*
+ * Parser implemented using the following document:
+ *
+ * EUROCONTROL STANDARD DOCUMENT FOR SURVEILLANCE DATA EXCHANGE
+ * Category 240 Radar Video Transmission
+ *
+ * Edition : 1.1
+ * Edition Date : May 2009
+ * Status : Released Issue
+ * Class : General Public  */
 
 static int asterix_probe(AVProbeData *p)
 {
@@ -41,6 +48,32 @@ static int asterix_read_header(AVFormatContext *s)
     AVStream *st;
     AVIOContext *pb = s->pb;
     AVRational fps = {1, 30};
+    uint8_t cat240[5];
+    uint16_t len, fspec;
+
+    /* read Video Data Block */
+    if (avio_read(pb, cat240, 5) != 5)
+        return AVERROR(EIO);
+
+    len = AV_RB16(&cat240[1]);
+    fspec = AV_RB16(&cat240[3]); /* 1 or 2 octets */
+
+    /* look for 240 */
+    if (cat240[0] != 0xf0)
+        return AVERROR(EIO);
+    
+    // jump to next cat240
+    avio_seek(pb, len, SEEK_SET);
+
+    if (avio_read(pb, cat240, 5) != 5)
+        return AVERROR(EIO);
+
+    /* look for 240 */
+    if (cat240[0] != 0xf0)
+        return AVERROR(EIO);
+
+    /* rewind */
+    avio_seek(pb, 0, SEEK_SET);
 
     st = avformat_new_stream(s, NULL);
     if (!st)
@@ -55,7 +88,7 @@ static int asterix_read_header(AVFormatContext *s)
     st->start_time = 0;
     st->duration = 0;
     av_log(s, AV_LOG_INFO, "opening asterix file. Stream index %d\n", st->index);
-
+    
     return 0;
 }
 
@@ -63,18 +96,44 @@ int cc = 0;
 
 static int asterix_read_packet(AVFormatContext *s, AVPacket *pkt)
 {
+    AVIOContext *pb = s->pb;
+    uint8_t cat240[8], messagetype;
+    uint16_t len, fspec, datasource;
     int ret;
 
-    ret = av_get_packet(s->pb, pkt, 0x1000);
-    if (ret != 0x1000)
-        ret = AVERROR_EOF;
-    pkt->stream_index = 0;
-    pkt->pts = cc;
-    pkt->dts = cc++;
-    pkt->duration = 1;
+    /* read Video Data Block */
+    while ((ret = avio_read(pb, cat240, sizeof(cat240))) > 0) {
 
-    s->streams[pkt->stream_index]->duration++;
-    
+        if (ret != sizeof(cat240) || cat240[0] != 0xf0)
+            return AVERROR(EIO);
+
+        /* We except Standard UAP format with FSPEC size 2 */
+        len = AV_RB16(&cat240[1]);
+        fspec = AV_RB16(&cat240[3]);
+        datasource = AV_RB16(&cat240[5]);
+        messagetype = cat240[7];
+
+        /* rewind to beginning of message */
+        if (avio_seek(pb, -1 * sizeof(cat240), SEEK_CUR) < 0)
+            return AVERROR(EIO);
+
+        /* must be Video Message 002 (Video Summary is 001) */
+        if (messagetype == 002) {
+            if (av_get_packet(s->pb, pkt, len) != len)
+                return AVERROR_EOF;
+
+            pkt->stream_index = 0;
+            pkt->pts = cc;
+            pkt->dts = cc++;
+            pkt->duration = 1;
+
+            s->streams[pkt->stream_index]->duration++;
+            return len;
+        }
+
+        if (avio_seek(pb, len, SEEK_CUR) < 0)
+            return AVERROR(EIO);
+    }
     return ret;
 }
 

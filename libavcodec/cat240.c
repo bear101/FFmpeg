@@ -23,6 +23,8 @@
 #include "avcodec.h"
 #include "internal.h"
 #include <libavutil/rational.h>
+#include <libavutil/avassert.h>
+#include <libavutil/intreadwrite.h>
 
 static av_cold int cat240_decode_init(AVCodecContext *avctx)
 {
@@ -44,6 +46,66 @@ static int cat240_decode_frame(AVCodecContext *avctx,
     AVFrame* frame = av_frame_alloc();
     uint8_t *framedata;
     int framesize;
+
+    /* it's a CAT240 */
+    av_assert0(buf[0] == 0xf0);
+
+    /* process Data Source Identifier (len = 2) */
+    uint16_t datasource;
+    datasource = AV_RB16(&buf[5]);
+    av_log(avctx, AV_LOG_DEBUG, "System Area Code (SAC): 0x%x, System Identification Code (SIC): 0x%x\n",
+           (datasource >> 8), (datasource & 0xff));
+    
+    /* process Message Type (len = 1) */
+    av_assert0(buf[7] == 002);
+
+    /* process Video Record Header (len = 4) */
+    uint32_t msgseqid;
+    msgseqid = AV_RB32(&buf[8]);
+    av_log(avctx, AV_LOG_DEBUG, "Message Sequence Identifier: %u\n", msgseqid);
+    
+    /* process Video Header Nano (len = 12) or Video Header Femto (len = 12) */
+    uint16_t start_az, end_az;
+    uint32_t start_rg, cell_dur;
+    start_az = AV_RB16(&buf[12]);
+    end_az = AV_RB16(&buf[14]);
+    start_rg = AV_RB32(&buf[16]);
+    cell_dur = AV_RB32(&buf[20]);
+    av_log(avctx, AV_LOG_DEBUG, "START_AZ: %u, END_AZ: %u, START_RG: %u, CELL_DUR: %u\n",
+           (unsigned)start_az, (unsigned)end_az, (unsigned)start_rg, (unsigned)cell_dur);
+
+    /* process Video Cells Resolution & Data Compression Indicator (len = 2) */
+    uint16_t vcr_dci;
+    uint8_t res;
+    vcr_dci = AV_RB16(&buf[24]);
+    res = (vcr_dci & 0xff);
+    av_log(avctx, AV_LOG_DEBUG, "Data Compression: %s, Spare: 0x%x, RES: %u\n",
+           (vcr_dci & 0x8000)?"true":"false", (vcr_dci >> 8) & 0x7f, (unsigned)res);
+
+    /* process Video Octets & Video Cells Counters (len = 5) */
+    uint16_t nb_vb;
+    uint32_t nb_cells;
+    nb_vb = AV_RB16(&buf[26]);
+    nb_cells = AV_RB24(&buf[28]);
+    av_log(avctx, AV_LOG_DEBUG, "NB_VB: %u, NB_CELLS: %u\n", (unsigned)nb_vb, (unsigned)nb_cells);
+    
+    /* process Video Block Low/Medium/High Volume */
+    uint8_t rep;
+    uint16_t video_block;
+    res = buf[31];
+    video_block = AV_RB16(&buf[32]);
+    switch (res) {
+    case 1 : /* Monobit Resolution */ break;
+    case 2 : /* Low Resolution */ break;
+    case 3 : /* Medium Resolution */ break;
+    case 4 : /* High Resolution */
+        break;
+    case 5 : /* Very High Resolution */ break;
+    case 6 : /* Ultra High Resolution */ break;
+    }
+
+    /* process Time of Day (len = 3) */
+
     
     if ((ret = ff_reget_buffer(avctx, frame)) < 0) {
         av_log(avctx, AV_LOG_ERROR, "Failed to alloc frame buffer\n");
