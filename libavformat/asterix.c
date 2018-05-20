@@ -119,12 +119,13 @@ static int asterix_read_packet(AVFormatContext *s, AVPacket *pkt)
 
         /* must be Video Message 002 (Video Summary is 001) */
         if (messagetype == 002) {
-            if (av_get_packet(s->pb, pkt, len) != len || cc > 5000)
+            if (av_get_packet(s->pb, pkt, len) != len)
                 return AVERROR_EOF;
 
             pkt->stream_index = 0;
-            pkt->pts = cc;
-            pkt->dts = cc++;
+            pkt->pts = cc / 10;
+            pkt->dts = cc / 10;
+            cc++;
             pkt->duration = 1;
 
             s->streams[pkt->stream_index]->duration++;

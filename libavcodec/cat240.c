@@ -176,7 +176,10 @@ static int cat240_decode_frame(AVCodecContext *avctx,
         return range;
 
     /* process Time of Day (len = 3) */
-
+    uint32_t tod;
+    buf = avpkt->data + avpkt->size - 3;
+    tod = AV_RB24(buf);
+    av_log(avctx, AV_LOG_DEBUG, "Time of Day: %u\n", (unsigned)tod);
     
     if ((ret = ff_reget_buffer(avctx, ctx->frame)) < 0) {
         av_log(avctx, AV_LOG_ERROR, "Failed to alloc frame buffer\n");
@@ -194,14 +197,10 @@ static int cat240_decode_frame(AVCodecContext *avctx,
         framedata[pos+2] = 0;
         framedata[pos+3] = 0;
     }
-    
-    /* memset(framedata, 0, framesize); */
-    /* for (int i=0;i<framesize;i+=4) { */
-    /*     int j = (ctx->frame->pkt_pts % 90) / 30; */
-    /*     framedata[i+j] = 0xff; */
-    /*     framedata[i+3] = 0x00; */
-    /* } */
 
+    if (x % (int)((3. / 360.) * avctx->width) != 0)
+        return framesize;
+ 
     ctx->frame->key_frame = 1;
 
     if ((ret = av_frame_ref(data, ctx->frame)) < 0)
