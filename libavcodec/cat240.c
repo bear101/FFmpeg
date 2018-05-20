@@ -28,6 +28,8 @@
 
 #include <zlib.h>
 
+#define ASTERIX_AZIMUTH_RESOLUTION 0x10000
+
 typedef struct Cat240Context {
     uint8_t decompress_buf[0x10000]; /* TODO: Should be dynamically
                                       * allocated based on Video Block
@@ -71,7 +73,7 @@ static int decompress_videoblocks(AVCodecContext *avctx, const uint8_t* buf, int
     strm.next_out = ctx->decompress_buf;
 
     ret = inflate(&strm, Z_FINISH);
-    av_log(avctx, AV_LOG_INFO, "Ret: %d, Decompressed %u\n", ret, sizeof(ctx->decompress_buf) - strm.avail_out);
+    av_log(avctx, AV_LOG_DEBUG, "Ret: %d, Decompressed %u\n", ret, sizeof(ctx->decompress_buf) - strm.avail_out);
     av_assert0(ret == Z_STREAM_END);
     
     inflateEnd(&strm);
@@ -89,6 +91,7 @@ static int cat240_decode_frame(AVCodecContext *avctx,
     Cat240Context *ctx = avctx->priv_data;
     uint8_t *framedata;
     int framesize;
+    int range;
 
     /* it's a CAT240 */
     av_assert0(*buf == 0xf0);
@@ -163,11 +166,14 @@ static int cat240_decode_frame(AVCodecContext *avctx,
     case 4 : /* High Resolution */
         av_log(avctx, AV_LOG_DEBUG, "REP: %u, Bytes remain: %u, len: %u\n",
                (unsigned)rep, (unsigned)((avpkt->data + avpkt->size) - buf));
-        decompress_videoblocks(avctx, buf, nb_vb);
+        range = decompress_videoblocks(avctx, buf, nb_vb);
         break;
     case 5 : /* Very High Resolution */ break;
     case 6 : /* Ultra High Resolution */ break;
     }
+
+    if (range < 0)
+        return range;
 
     /* process Time of Day (len = 3) */
 
@@ -180,12 +186,21 @@ static int cat240_decode_frame(AVCodecContext *avctx,
     framedata = ctx->frame->data[0];
     framesize = ctx->frame->height * ctx->frame->linesize[0];
 
-    memset(framedata, 0, framesize);
-    for (int i=0;i<framesize;i+=4) {
-        int j = (ctx>frame->pkt_pts % 90) / 30;
-        framedata[i+j] = 0xff;
-        framedata[i+3] = 0x00;
+    x = start_az / (ASTERIX_AZIMUTH_RESOLUTION / avctx->width);
+    for (y = 0;y < range; y++) {
+        int pos = ctx->frame->linesize[0] * y + x * 4;
+        framedata[pos] = 0;
+        framedata[pos+1] = ctx->decompress_buf[y];
+        framedata[pos+2] = 0;
+        framedata[pos+3] = 0;
     }
+    
+    /* memset(framedata, 0, framesize); */
+    /* for (int i=0;i<framesize;i+=4) { */
+    /*     int j = (ctx->frame->pkt_pts % 90) / 30; */
+    /*     framedata[i+j] = 0xff; */
+    /*     framedata[i+3] = 0x00; */
+    /* } */
 
     ctx->frame->key_frame = 1;
 

@@ -80,8 +80,8 @@ static int asterix_read_header(AVFormatContext *s)
         return AVERROR(ENOMEM);
 
     st->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
-    st->codecpar->width = 1024;
-    st->codecpar->height = 1024;
+    st->codecpar->width = 4096;
+    st->codecpar->height = 2048;
     st->codecpar->codec_id = AV_CODEC_ID_CAT240;
     st->codecpar->format = AV_PIX_FMT_RGB32;
     st->time_base = fps;
@@ -119,7 +119,7 @@ static int asterix_read_packet(AVFormatContext *s, AVPacket *pkt)
 
         /* must be Video Message 002 (Video Summary is 001) */
         if (messagetype == 002) {
-            if (av_get_packet(s->pb, pkt, len) != len)
+            if (av_get_packet(s->pb, pkt, len) != len || cc > 5000)
                 return AVERROR_EOF;
 
             pkt->stream_index = 0;
