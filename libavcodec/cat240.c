@@ -26,6 +26,17 @@
 #include <libavutil/avassert.h>
 #include <libavutil/intreadwrite.h>
 
+#include <zlib.h>
+
+typedef struct Cat240Context {
+    uint8_t decompress_buf[0x10000]; /* TODO: Should be dynamically
+                                      * allocated based on Video Block
+                                      * Low/Medium/High Data Volume,
+                                      * i.e. 1020, 16320 and 65024
+                                      * bytes */
+    AVFrame *frame;
+} Cat240Context;
+
 static av_cold int cat240_decode_init(AVCodecContext *avctx)
 {
     av_log(avctx, AV_LOG_INFO, "init\n");
@@ -36,6 +47,36 @@ static av_cold int cat240_decode_init(AVCodecContext *avctx)
     return 0;
 }
 
+static av_cold int cat240_decode_end(AVCodecContext *avctx)
+{
+    return 0;
+}
+
+static int decompress_videoblocks(AVCodecContext *avctx, const uint8_t* buf, int size)
+{
+    int ret;
+    z_stream strm = {Z_NULL};
+    Cat240Context *ctx = avctx->priv_data;
+        
+    ret = inflateInit(&strm);
+    if (ret != Z_OK)
+        return AVERROR(ENOMEM);
+
+    strm.avail_in = size;
+    strm.total_in = size;
+    strm.next_in = buf;
+    strm.avail_out = sizeof(ctx->decompress_buf);
+    strm.next_out = ctx->decompress_buf;
+
+    ret = inflate(&strm, Z_FINISH);
+    av_log(avctx, AV_LOG_INFO, "Ret: %d, Decompressed %u\n", ret, sizeof(ctx->decompress_buf) - strm.avail_out);
+    av_assert0(ret == Z_STREAM_END);
+    
+    inflateEnd(&strm);
+
+    return ret == Z_STREAM_END ? sizeof(ctx->decompress_buf) - strm.avail_out : AVERROR_INVALIDDATA;
+}
+
 static int cat240_decode_frame(AVCodecContext *avctx,
                                void *data, int *got_frame,
                                AVPacket *avpkt)
@@ -43,6 +84,7 @@ static int cat240_decode_frame(AVCodecContext *avctx,
     int ret, x, y;
     const uint8_t *buf = avpkt->data;
     int buf_size       = avpkt->size;
+    Cat240Context *ctx = avctx->priv_data;
     AVFrame* frame = av_frame_alloc();
     uint8_t *framedata;
     int framesize;
@@ -111,11 +153,8 @@ static int cat240_decode_frame(AVCodecContext *avctx,
     
     /* process Video Block Low/Medium/High Volume */
     uint8_t rep;
-    uint16_t video_block;
     rep = *buf;
     buf += 1;
-    video_block = AV_RB16(buf);
-    buf += 2;
     switch (res) {
     case 1 : /* Monobit Resolution */ break;
     case 2 : /* Low Resolution */ break;
@@ -123,6 +162,7 @@ static int cat240_decode_frame(AVCodecContext *avctx,
     case 4 : /* High Resolution */
         av_log(avctx, AV_LOG_DEBUG, "REP: %u, Bytes remain: %u, len: %u\n",
                (unsigned)rep, (unsigned)((avpkt->data + avpkt->size) - buf));
+        decompress_videoblocks(avctx, buf, nb_vb);
         break;
     case 5 : /* Very High Resolution */ break;
     case 6 : /* Ultra High Resolution */ break;
@@ -160,7 +200,9 @@ AVCodec ff_cat240_decoder = {
     .long_name      = NULL_IF_CONFIG_SMALL("CAT240 Radar Video (Eurocontrol Category 240)"),
     .type           = AVMEDIA_TYPE_VIDEO,
     .id             = AV_CODEC_ID_CAT240,
+    .priv_data_size = sizeof(Cat240Context),
     .init           = cat240_decode_init,
     .decode         = cat240_decode_frame,
+    .close          = cat240_decode_end,
     .capabilities   = AV_CODEC_CAP_DR1,
 };
