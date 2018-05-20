@@ -39,16 +39,18 @@ typedef struct Cat240Context {
 
 static av_cold int cat240_decode_init(AVCodecContext *avctx)
 {
-    av_log(avctx, AV_LOG_INFO, "init\n");
-    av_log(avctx, AV_LOG_INFO, "Pixel fmt %d\n", avctx->pix_fmt);
-    av_log(avctx, AV_LOG_INFO, "Framerate %g\n", av_q2d(avctx->framerate));
-    av_log(avctx, AV_LOG_INFO, "Timebase %g\n", av_q2d(avctx->time_base));
+    Cat240Context *ctx = avctx->priv_data;
+    ctx->frame = av_frame_alloc();
+    if (!ctx->frame)
+        return AVERROR(ENOMEM);
 
     return 0;
 }
 
 static av_cold int cat240_decode_end(AVCodecContext *avctx)
 {
+    Cat240Context *ctx = avctx->priv_data;
+    av_frame_free(&ctx->frame);
     return 0;
 }
 
@@ -85,7 +87,6 @@ static int cat240_decode_frame(AVCodecContext *avctx,
     const uint8_t *buf = avpkt->data;
     int buf_size       = avpkt->size;
     Cat240Context *ctx = avctx->priv_data;
-    AVFrame* frame = av_frame_alloc();
     uint8_t *framedata;
     int framesize;
 
@@ -171,24 +172,24 @@ static int cat240_decode_frame(AVCodecContext *avctx,
     /* process Time of Day (len = 3) */
 
     
-    if ((ret = ff_reget_buffer(avctx, frame)) < 0) {
+    if ((ret = ff_reget_buffer(avctx, ctx->frame)) < 0) {
         av_log(avctx, AV_LOG_ERROR, "Failed to alloc frame buffer\n");
         return ret;
     }
 
-    framedata = frame->data[0];
-    framesize = frame->height * frame->linesize[0];
+    framedata = ctx->frame->data[0];
+    framesize = ctx->frame->height * ctx->frame->linesize[0];
 
     memset(framedata, 0, framesize);
     for (int i=0;i<framesize;i+=4) {
-        int j = (frame->pkt_pts % 90) / 30;
+        int j = (ctx>frame->pkt_pts % 90) / 30;
         framedata[i+j] = 0xff;
         framedata[i+3] = 0x00;
     }
 
-    frame->key_frame = 1;
+    ctx->frame->key_frame = 1;
 
-    if ((ret = av_frame_ref(data, frame)) < 0)
+    if ((ret = av_frame_ref(data, ctx->frame)) < 0)
         return ret;
 
     *got_frame = 1;
