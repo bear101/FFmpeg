@@ -198,7 +198,7 @@ static int cat240_decode_frame(AVCodecContext *avctx,
         framedata[pos+3] = 0;
     }
 
-    if (x % (int)((3. / 360.) * avctx->width) != 0)
+    if (avpkt->pts == avpkt->dts)
         return framesize;
  
     ctx->frame->key_frame = 1;

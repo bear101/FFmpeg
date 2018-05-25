@@ -36,20 +36,37 @@
  * Status : Released Issue
  * Class : General Public  */
 
+typedef struct AsterixContext {
+    uint32_t start_tod; /* 24-bit */
+    int64_t last_pts;
+} AsterixContext;
+
 static int asterix_probe(AVProbeData *p)
 {
     if (p->filename && strstr(p->filename, ".asterix"))
         return AVPROBE_SCORE_MAX;
+
+    av_log(p, AV_LOG_INFO, "opening asterix file %s\n", p->filename);
     return 0;
 }
 
+/* static int asterix_open(URLContext *h, const char *uri, int flags) */
+/* { */
+/*     av_log(p, AV_LOG_INFO, "asterix url open %s\n", uri); */
+/*     return 0; */
+/* } */
+
 static int asterix_read_header(AVFormatContext *s)
 {
+    AsterixContext* ctx = s->priv_data;
     AVStream *st;
     AVIOContext *pb = s->pb;
     AVRational fps = {1, 30};
     uint8_t cat240[5];
     uint16_t len, fspec;
+
+    ctx->start_tod = -1;
+    ctx->last_pts = 0;
 
     /* read Video Data Block */
     if (avio_read(pb, cat240, 5) != 5)
@@ -92,10 +109,9 @@ static int asterix_read_header(AVFormatContext *s)
     return 0;
 }
 
-int cc = 0;
-
 static int asterix_read_packet(AVFormatContext *s, AVPacket *pkt)
 {
+    AsterixContext* ctx = s->priv_data;
     AVIOContext *pb = s->pb;
     uint8_t cat240[8], messagetype;
     uint16_t len, fspec, datasource;
@@ -119,14 +135,43 @@ static int asterix_read_packet(AVFormatContext *s, AVPacket *pkt)
 
         /* must be Video Message 002 (Video Summary is 001) */
         if (messagetype == 002) {
+
+            double elapsed;
+            
+            /* process Time of Day (len = 3) */
+            char todbuf[4];
+            uint32_t tod = 0;
+            if (avio_seek(pb, len - 3, SEEK_CUR) > 0 &&
+                avio_read(pb, todbuf, 3) > 0) {
+                tod = AV_RB24(todbuf);
+                av_log(s, AV_LOG_DEBUG, "Time of Day: %u\n", (unsigned)tod);
+            }
+
+            if (ctx->start_tod == -1)
+                ctx->start_tod = tod;
+
+            if (avio_seek(pb, -len, SEEK_CUR) < 0)
+                return AVERROR(EIO);
+            
             if (av_get_packet(s->pb, pkt, len) != len)
                 return AVERROR_EOF;
 
             pkt->stream_index = 0;
-            pkt->pts = cc / 10;
-            pkt->dts = cc / 10;
-            cc++;
-            pkt->duration = 1;
+
+            elapsed = (tod - ctx->start_tod) / 128.;
+            
+            av_log(s, AV_LOG_DEBUG, "Duration: %g, Framerate %g\n",
+                   elapsed, av_q2d(s->streams[pkt->stream_index]->time_base));
+
+            pkt->duration = 0;
+            pkt->pts = ctx->last_pts;
+            pkt->dts = ctx->last_pts;
+            while (elapsed >= (ctx->last_pts + 1) * av_q2d(s->streams[pkt->stream_index]->time_base)) {
+                pkt->pts = ++ctx->last_pts;
+                ++pkt->duration;
+            }
+            
+            av_log(s, AV_LOG_DEBUG, "PTS %d, DTS %d\n", (int)pkt->pts, (int)pkt->dts);
 
             s->streams[pkt->stream_index]->duration++;
             return len;
@@ -138,12 +183,20 @@ static int asterix_read_packet(AVFormatContext *s, AVPacket *pkt)
     return ret;
 }
 
+static int asterix_read_close(AVFormatContext *s)
+{
+    return 0;
+}
+
 AVInputFormat ff_asterix_demuxer = {
     .name           = "asterix",
     .long_name      = NULL_IF_CONFIG_SMALL("ASTERIX Radar Video (Eurocontrol Category 240)"),
     .read_probe     = asterix_probe,
+    /* .url_open       = asterix_open, */
+    .priv_data_size = sizeof(AsterixContext),
     .read_header    = asterix_read_header,
     .read_packet    = asterix_read_packet,
+    .read_close     = asterix_read_close,
     .extensions     = "asterix",
     .flags          = AVFMT_GENERIC_INDEX,
     /* .codec_tag      = (const AVCodecTag* const []){ff_codec_asterix_tags, 0}, */
