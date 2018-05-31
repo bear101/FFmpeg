@@ -303,8 +303,6 @@ static int film_read_packet(AVFormatContext *s,
     pkt->stream_index = sample->stream;
     pkt->dts = sample->pts;
     pkt->pts = sample->pts;
-    av_log(s, AV_LOG_INFO, "%g, Pts %u stream %d\n",
-           av_q2d(s->streams[pkt->stream_index]->time_base), (unsigned)pkt->pts, pkt->stream_index);
     pkt->flags |= sample->keyframe ? AV_PKT_FLAG_KEY : 0;
     if (next_sample != NULL)
         pkt->duration = next_sample->pts - sample->pts;
