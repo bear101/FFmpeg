@@ -98,7 +98,7 @@ static int asterix_read_header(AVFormatContext *s)
 
     st->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
     st->codecpar->width = 4096;
-    st->codecpar->height = 2048;
+    st->codecpar->height = 4096;
     st->codecpar->codec_id = AV_CODEC_ID_CAT240;
     st->codecpar->format = AV_PIX_FMT_RGB32;
     st->time_base = fps;
@@ -159,6 +159,7 @@ static int asterix_read_packet(AVFormatContext *s, AVPacket *pkt)
             pkt->stream_index = 0;
 
             elapsed = (tod - ctx->start_tod) / 128.;
+            /* elapsed *= 10.; */
             
             av_log(s, AV_LOG_DEBUG, "Duration: %g, Framerate %g\n",
                    elapsed, av_q2d(s->streams[pkt->stream_index]->time_base));

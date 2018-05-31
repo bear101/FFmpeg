@@ -27,6 +27,7 @@
 #include <libavutil/intreadwrite.h>
 
 #include <zlib.h>
+#include <math.h>
 
 #define ASTERIX_AZIMUTH_RESOLUTION 0x10000
 
@@ -73,12 +74,47 @@ static int decompress_videoblocks(AVCodecContext *avctx, const uint8_t* buf, int
     strm.next_out = ctx->decompress_buf;
 
     ret = inflate(&strm, Z_FINISH);
-    av_log(avctx, AV_LOG_DEBUG, "Ret: %d, Decompressed %u\n", ret, sizeof(ctx->decompress_buf) - strm.avail_out);
-    av_assert0(ret == Z_STREAM_END);
     
     inflateEnd(&strm);
 
     return ret == Z_STREAM_END ? sizeof(ctx->decompress_buf) - strm.avail_out : AVERROR_INVALIDDATA;
+}
+
+static int cat240_draw_slice(AVCodecContext *avctx, uint16_t start_az, uint16_t end_az, uint16_t range)
+{
+    Cat240Context *ctx = avctx->priv_data;
+    uint8_t *framedata = ctx->frame->data[0];
+    uint8_t *center = framedata + ((ctx->frame->height / 2) * ctx->frame->linesize[0]) + (ctx->frame->linesize[0] / 2);
+    double angle;
+    int w = (end_az - start_az + ASTERIX_AZIMUTH_RESOLUTION) % ASTERIX_AZIMUTH_RESOLUTION;
+
+    while (--w >= 0) {
+        double a = ((start_az + w) % ASTERIX_AZIMUTH_RESOLUTION) / (double)ASTERIX_AZIMUTH_RESOLUTION;
+        angle = M_PI * 2. * -a + M_PI;
+        double s = sin(angle), c = cos(angle);
+
+        /* int x_max = s * avctx->width/2; */
+        /* int y_max = c * avctx->width/2; */
+    
+        /* av_log(avctx, AV_LOG_DEBUG, "Angle: %g, Deg: %g, max x=%d,y=%d\n", angle, 360.0 * a, x_max, y_max); */
+
+        int r = avctx->width/2;
+        while (--r >= 0) {
+            int x = s * r;
+            int y = c * r;
+            uint8_t *ptr = center + (ctx->frame->linesize[0] * y);
+            ptr += x * 4;
+
+            av_assert0(ptr >= framedata);
+            av_assert0(ptr < framedata + ctx->frame->height * ctx->frame->linesize[0]);
+            ptr[0] = 0;
+            ptr[1] = ctx->decompress_buf[r];;
+            ptr[2] = 0;
+            ptr[3] = 0;
+        }
+    }
+
+    return 0;
 }
 
 static int cat240_decode_frame(AVCodecContext *avctx,
@@ -189,13 +225,19 @@ static int cat240_decode_frame(AVCodecContext *avctx,
     framedata = ctx->frame->data[0];
     framesize = ctx->frame->height * ctx->frame->linesize[0];
 
-    x = start_az / (ASTERIX_AZIMUTH_RESOLUTION / avctx->width);
-    for (y = 0;y < range; y++) {
-        int pos = ctx->frame->linesize[0] * y + x * 4;
-        framedata[pos] = 0;
-        framedata[pos+1] = ctx->decompress_buf[y];
-        framedata[pos+2] = 0;
-        framedata[pos+3] = 0;
+    static int draw_slice = 1;
+
+    if (draw_slice) {
+        cat240_draw_slice(avctx, start_az, end_az, nb_vb);
+    } else {
+        x = start_az / (ASTERIX_AZIMUTH_RESOLUTION / avctx->width);
+        for (y = 0;y < range; y++) {
+            int pos = ctx->frame->linesize[0] * y + x * 4;
+            framedata[pos] = 0;
+            framedata[pos+1] = ctx->decompress_buf[y];
+            framedata[pos+2] = 0;
+            framedata[pos+3] = 0;
+        }
     }
 
     if (avpkt->pts == avpkt->dts)
