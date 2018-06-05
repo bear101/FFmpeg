@@ -20,6 +20,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "cat240.h"
 #include "avcodec.h"
 #include "internal.h"
 #include <libavutil/rational.h>
@@ -39,6 +40,100 @@ typedef struct Cat240Context {
                                       * bytes */
     AVFrame *frame;
 } Cat240Context;
+
+
+int parse_cat240_videomessage(void *avcl, const uint8_t* buf,
+                              uint16_t size, Cat240VideoMessage* msg)
+{
+    const uint8_t* buf_ptr = buf;
+
+    /* it's a CAT240 */
+    if (*buf_ptr != 0xf0)
+        return AVERROR(EIO);
+
+    buf_ptr += 1;
+
+    msg->len = AV_RB16(buf_ptr);
+    buf_ptr += 2;
+
+    msg->fspec = AV_RB16(buf_ptr);
+    buf_ptr += 2;
+    av_log(avcl, AV_LOG_DEBUG, "LEN: %u, FSPEC: %x\n",
+           (unsigned)msg->len, (unsigned)msg->fspec);
+
+    /* process Data Source Identifier (len = 2) */
+    msg->datasource = AV_RB16(buf_ptr);
+    buf_ptr += 2;
+    av_log(avcl, AV_LOG_DEBUG, "System Area Code (SAC): 0x%x, System Identification Code (SIC): 0x%x\n",
+           (msg->datasource >> 8), (msg->datasource & 0xff));
+
+    /* process Message Type (len = 1) */
+    if (*buf_ptr != 002)
+        return 1; /* we only want Video Message type */
+
+    buf_ptr += 1;
+
+    /* process Video Record Header (len = 4) */
+    msg->msgseqid = AV_RB32(buf_ptr);
+    buf_ptr += 4;
+    av_log(avcl, AV_LOG_DEBUG, "Message Sequence Identifier: %u\n", msg->msgseqid);
+
+    /* process Video Header Nano (len = 12) or Video Header Femto (len = 12) */
+    msg->start_az = AV_RB16(buf_ptr);
+    buf_ptr += 2;
+    msg->end_az = AV_RB16(buf_ptr);
+    buf_ptr += 2;
+    msg->start_rg = AV_RB32(buf_ptr);
+    buf_ptr += 4;
+    msg->cell_dur = AV_RB32(buf_ptr);
+    buf_ptr += 4;
+    av_log(avcl, AV_LOG_DEBUG, "START_AZ: %u, END_AZ: %u, START_RG: %u, CELL_DUR: %u\n",
+           (unsigned)msg->start_az, (unsigned)msg->end_az,
+           (unsigned)msg->start_rg, (unsigned)msg->cell_dur);
+
+    /* process Video Cells Resolution & Data Compression Indicator (len = 2) */
+    msg->vcr_dci = AV_RB16(buf_ptr);
+    buf_ptr += 2;
+    msg->res = (msg->vcr_dci & 0xff);
+    av_log(avcl, AV_LOG_DEBUG, "Data Compression: %s, Spare: 0x%x, RES: %u\n",
+           (msg->vcr_dci & 0x8000)?"true":"false", (msg->vcr_dci >> 8) & 0x7f,
+           (unsigned)msg->res);
+
+    /* process Video Block Low/Medium/High Volume */
+    switch (msg->res) {
+    case 1 : /* Monobit Resolution */ break;
+    case 2 : /* Low Resolution */ break;
+    case 3 : /* Medium Resolution */ break;
+    case 4 : /* High Resolution */ break;
+    case 5 : /* Very High Resolution */ break;
+    case 6 : /* Ultra High Resolution */ break;
+    }
+
+    /* process Video Octets & Video Cells Counters (len = 5) */
+    msg->nb_vb = AV_RB16(buf_ptr);
+    buf_ptr += 2;
+    msg->nb_cells = AV_RB24(buf_ptr);
+    buf_ptr += 3;
+    av_log(avcl, AV_LOG_DEBUG, "NB_VB: %u, NB_CELLS: %u\n",
+           (unsigned)msg->nb_vb, (unsigned)msg->nb_cells);
+
+    /* process Video Block Low/Medium/High Volume */
+    msg->rep = *buf_ptr;
+    buf_ptr += 1;
+
+    msg->data = buf_ptr;
+
+    /* ensure video data is not bigger than the buffer */
+    if (buf_ptr + msg->nb_vb > buf + size - 3)
+        return AVERROR_INVALIDDATA;
+
+    /* process Time of Day (len = 3) */
+    buf_ptr = buf + size - 3;
+    msg->tod = AV_RB24(buf_ptr);
+    av_log(avcl, AV_LOG_DEBUG, "Time of Day: %u\n", (unsigned)msg->tod);
+
+    return 0;
+};
 
 static av_cold int cat240_decode_init(AVCodecContext *avctx)
 {
@@ -62,7 +157,7 @@ static int decompress_videoblocks(AVCodecContext *avctx, const uint8_t* buf, int
     int ret;
     z_stream strm = {Z_NULL};
     Cat240Context *ctx = avctx->priv_data;
-        
+
     ret = inflateInit(&strm);
     if (ret != Z_OK)
         return AVERROR(ENOMEM);
@@ -74,13 +169,14 @@ static int decompress_videoblocks(AVCodecContext *avctx, const uint8_t* buf, int
     strm.next_out = ctx->decompress_buf;
 
     ret = inflate(&strm, Z_FINISH);
-    
+
     inflateEnd(&strm);
 
     return ret == Z_STREAM_END ? sizeof(ctx->decompress_buf) - strm.avail_out : AVERROR_INVALIDDATA;
 }
 
-static int cat240_draw_slice(AVCodecContext *avctx, uint16_t start_az, uint16_t end_az, uint16_t range)
+static int cat240_draw_slice(AVCodecContext *avctx, uint16_t start_az,
+                             uint16_t end_az, const uint8_t* sweep_data)
 {
     Cat240Context *ctx = avctx->priv_data;
     uint8_t *framedata = ctx->frame->data[0];
@@ -95,7 +191,7 @@ static int cat240_draw_slice(AVCodecContext *avctx, uint16_t start_az, uint16_t 
 
         /* int x_max = s * avctx->width/2; */
         /* int y_max = c * avctx->width/2; */
-    
+
         /* av_log(avctx, AV_LOG_DEBUG, "Angle: %g, Deg: %g, max x=%d,y=%d\n", angle, 360.0 * a, x_max, y_max); */
 
         int r = avctx->width/2;
@@ -108,7 +204,7 @@ static int cat240_draw_slice(AVCodecContext *avctx, uint16_t start_az, uint16_t 
             av_assert0(ptr >= framedata);
             av_assert0(ptr < framedata + ctx->frame->height * ctx->frame->linesize[0]);
             ptr[0] = 0;
-            ptr[1] = ctx->decompress_buf[r];;
+            ptr[1] = sweep_data[r];
             ptr[2] = 0;
             ptr[3] = 0;
         }
@@ -122,101 +218,30 @@ static int cat240_decode_frame(AVCodecContext *avctx,
                                AVPacket *avpkt)
 {
     int ret, x, y;
-    const uint8_t *buf = avpkt->data;
-    int buf_size       = avpkt->size;
     Cat240Context *ctx = avctx->priv_data;
+    const uint8_t *video_uncompressed;
     uint8_t *framedata;
     int framesize;
     int range;
-
-    /* it's a CAT240 */
-    av_assert0(*buf == 0xf0);
-    buf += 1;
-
-    uint16_t len;
-    len = AV_RB16(buf);
-    buf += 2;
-
-    uint16_t fspec;
-    fspec = AV_RB16(buf);
-    buf += 2;
-    av_log(avctx, AV_LOG_DEBUG, "LEN: %u, FSPEC: %x\n", (unsigned)len, (unsigned)fspec);
-
-    /* process Data Source Identifier (len = 2) */
-    uint16_t datasource;
-    datasource = AV_RB16(buf);
-    buf += 2;
-    av_log(avctx, AV_LOG_DEBUG, "System Area Code (SAC): 0x%x, System Identification Code (SIC): 0x%x\n",
-           (datasource >> 8), (datasource & 0xff));
+    Cat240VideoMessage msg;
     
-    /* process Message Type (len = 1) */
-    av_assert0(*buf == 002);
-    buf += 1;
+    ret = parse_cat240_videomessage(avctx, avpkt->data, avpkt->size, &msg);
+    if (ret < 0)
+        return ret;
 
-    /* process Video Record Header (len = 4) */
-    uint32_t msgseqid;
-    msgseqid = AV_RB32(buf);
-    buf += 4;
-    av_log(avctx, AV_LOG_DEBUG, "Message Sequence Identifier: %u\n", msgseqid);
-    
-    /* process Video Header Nano (len = 12) or Video Header Femto (len = 12) */
-    uint16_t start_az, end_az;
-    uint32_t start_rg, cell_dur;
-    start_az = AV_RB16(buf);
-    buf += 2;
-    end_az = AV_RB16(buf);
-    buf += 2;
-    start_rg = AV_RB32(buf);
-    buf += 4;
-    cell_dur = AV_RB32(buf);
-    buf += 4;
-    av_log(avctx, AV_LOG_DEBUG, "START_AZ: %u, END_AZ: %u, START_RG: %u, CELL_DUR: %u\n",
-           (unsigned)start_az, (unsigned)end_az, (unsigned)start_rg, (unsigned)cell_dur);
-
-    /* process Video Cells Resolution & Data Compression Indicator (len = 2) */
-    uint16_t vcr_dci;
-    uint8_t res;
-    vcr_dci = AV_RB16(buf);
-    buf += 2;
-    res = (vcr_dci & 0xff);
-    av_log(avctx, AV_LOG_DEBUG, "Data Compression: %s, Spare: 0x%x, RES: %u\n",
-           (vcr_dci & 0x8000)?"true":"false", (vcr_dci >> 8) & 0x7f, (unsigned)res);
-
-    /* process Video Octets & Video Cells Counters (len = 5) */
-    uint16_t nb_vb;
-    uint32_t nb_cells;
-    nb_vb = AV_RB16(buf);
-    buf += 2;
-    nb_cells = AV_RB24(buf);
-    buf += 3;
-    av_log(avctx, AV_LOG_DEBUG, "NB_VB: %u, NB_CELLS: %u\n", (unsigned)nb_vb, (unsigned)nb_cells);
-    
-    /* process Video Block Low/Medium/High Volume */
-    uint8_t rep;
-    rep = *buf;
-    buf += 1;
-    switch (res) {
-    case 1 : /* Monobit Resolution */ break;
-    case 2 : /* Low Resolution */ break;
-    case 3 : /* Medium Resolution */ break;
-    case 4 : /* High Resolution */
-        av_log(avctx, AV_LOG_DEBUG, "REP: %u, Bytes remain: %u, len: %u\n",
-               (unsigned)rep, (unsigned)((avpkt->data + avpkt->size) - buf));
-        range = decompress_videoblocks(avctx, buf, nb_vb);
-        break;
-    case 5 : /* Very High Resolution */ break;
-    case 6 : /* Ultra High Resolution */ break;
+    if (msg.vcr_dci & 0x8000) {
+        range = decompress_videoblocks(avctx, msg.data, msg.nb_vb);
+        video_uncompressed = ctx->decompress_buf;
+    } else {
+        range = msg.nb_vb;
+        video_uncompressed = msg.data;
     }
+    
+    av_log(avctx, AV_LOG_DEBUG, "Range: %u\n", (unsigned)range);
 
     if (range < 0)
         return range;
 
-    /* process Time of Day (len = 3) */
-    uint32_t tod;
-    buf = avpkt->data + avpkt->size - 3;
-    tod = AV_RB24(buf);
-    av_log(avctx, AV_LOG_DEBUG, "Time of Day: %u\n", (unsigned)tod);
-    
     if ((ret = ff_reget_buffer(avctx, ctx->frame)) < 0) {
         av_log(avctx, AV_LOG_ERROR, "Failed to alloc frame buffer\n");
         return ret;
@@ -228,13 +253,13 @@ static int cat240_decode_frame(AVCodecContext *avctx,
     static int draw_slice = 1;
 
     if (draw_slice) {
-        cat240_draw_slice(avctx, start_az, end_az, nb_vb);
+        cat240_draw_slice(avctx, msg.start_az, msg.end_az, video_uncompressed);
     } else {
-        x = start_az / (ASTERIX_AZIMUTH_RESOLUTION / avctx->width);
+        x = msg.start_az / (ASTERIX_AZIMUTH_RESOLUTION / avctx->width);
         for (y = 0;y < range; y++) {
             int pos = ctx->frame->linesize[0] * y + x * 4;
             framedata[pos] = 0;
-            framedata[pos+1] = ctx->decompress_buf[y];
+            framedata[pos+1] = video_uncompressed[y];
             framedata[pos+2] = 0;
             framedata[pos+3] = 0;
         }
@@ -242,7 +267,7 @@ static int cat240_decode_frame(AVCodecContext *avctx,
 
     if (avpkt->pts == avpkt->dts)
         return framesize;
- 
+
     ctx->frame->key_frame = 1;
 
     if ((ret = av_frame_ref(data, ctx->frame)) < 0)

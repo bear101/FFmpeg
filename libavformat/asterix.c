@@ -23,6 +23,7 @@
 #include "asterix.h"
 #include <libavutil/rational.h>
 #include <libavutil/intreadwrite.h>
+#include <libavcodec/cat240.h>
 #include <string.h>
 
 /*
@@ -62,32 +63,39 @@ static int asterix_read_header(AVFormatContext *s)
     AVStream *st;
     AVIOContext *pb = s->pb;
     AVRational fps = {1, 30};
-    uint8_t cat240[5];
+    uint8_t cat240[5], *msg_buf = 0;
+    Cat240VideoMessage msg;
     uint16_t len, fspec;
 
+    memset(&msg, 0, sizeof(msg));
+    
     ctx->start_tod = -1;
     ctx->last_pts = 0;
 
-    /* read Video Data Block */
-    if (avio_read(pb, cat240, 5) != 5)
-        return AVERROR(EIO);
+    while (msg.nb_cells == 0) {
 
-    len = AV_RB16(&cat240[1]);
-    fspec = AV_RB16(&cat240[3]); /* 1 or 2 octets */
-
-    /* look for 240 */
-    if (cat240[0] != 0xf0)
-        return AVERROR(EIO);
+        if (avio_read(pb, cat240, sizeof(cat240)) != sizeof(cat240))
+            goto error;
+        
+        if (avio_seek(pb, -sizeof(cat240), SEEK_CUR) < 0)
+            goto error;
+        
+        /* look for 240 */
+        if (cat240[0] != 0xf0)
+            goto error;
     
-    // jump to next cat240
-    avio_seek(pb, len, SEEK_SET);
+        len = AV_RB16(&cat240[1]);
+        fspec = AV_RB16(&cat240[3]); /* 1 or 2 octets */
+        
+        msg_buf = av_malloc(len);
+        if (avio_read(pb, msg_buf, len) != len)
+            goto error;
 
-    if (avio_read(pb, cat240, 5) != 5)
-        return AVERROR(EIO);
-
-    /* look for 240 */
-    if (cat240[0] != 0xf0)
-        return AVERROR(EIO);
+        if (parse_cat240_videomessage(s, msg_buf, len, &msg) < 0)
+            goto error;
+        
+        av_free(msg_buf);
+    }
 
     /* rewind */
     avio_seek(pb, 0, SEEK_SET);
@@ -97,8 +105,7 @@ static int asterix_read_header(AVFormatContext *s)
         return AVERROR(ENOMEM);
 
     st->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
-    st->codecpar->width = 4096;
-    st->codecpar->height = 4096;
+    st->codecpar->width = st->codecpar->height = msg.nb_cells * 2;
     st->codecpar->codec_id = AV_CODEC_ID_CAT240;
     st->codecpar->format = AV_PIX_FMT_RGB32;
     st->time_base = fps;
@@ -107,6 +114,10 @@ static int asterix_read_header(AVFormatContext *s)
     av_log(s, AV_LOG_INFO, "opening asterix file. Stream index %d\n", st->index);
     
     return 0;
+    
+error:
+    av_free(msg_buf);
+    return AVERROR(EIO);
 }
 
 static int asterix_read_packet(AVFormatContext *s, AVPacket *pkt)
