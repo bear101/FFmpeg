@@ -39,6 +39,8 @@ typedef struct Cat240Context {
                                       * i.e. 1020, 16320 and 65024
                                       * bytes */
     AVFrame *frame;
+    int keyframe_az; /* key frame is one full scan (start_az in
+                      * Cat240VideoMessage-struct */
 } Cat240Context;
 
 
@@ -139,6 +141,7 @@ static av_cold int cat240_decode_init(AVCodecContext *avctx)
 {
     Cat240Context *ctx = avctx->priv_data;
     ctx->frame = av_frame_alloc();
+    ctx->keyframe_az = -1;
     if (!ctx->frame)
         return AVERROR(ENOMEM);
 
@@ -265,10 +268,15 @@ static int cat240_decode_frame(AVCodecContext *avctx,
         }
     }
 
+    /* mark as key frame if a full scan has completed */
+    ctx->frame->key_frame = ctx->keyframe_az == (int)msg.start_az;
+
+    if (ctx->keyframe_az == -1) {
+        ctx->keyframe_az = msg.start_az;
+    }
+
     if (avpkt->pts == avpkt->dts)
         return framesize;
-
-    ctx->frame->key_frame = 1;
 
     if ((ret = av_frame_ref(data, ctx->frame)) < 0)
         return ret;
