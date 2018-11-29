@@ -68,7 +68,7 @@ static int asterix_read_header(AVFormatContext *s)
     uint16_t len, fspec;
 
     memset(&msg, 0, sizeof(msg));
-    
+
     ctx->start_tod = -1;
     ctx->last_pts = 0;
 
@@ -76,24 +76,24 @@ static int asterix_read_header(AVFormatContext *s)
 
         if (avio_read(pb, cat240, sizeof(cat240)) != sizeof(cat240))
             goto error;
-        
+
         if (avio_seek(pb, -sizeof(cat240), SEEK_CUR) < 0)
             goto error;
-        
+
         /* look for 240 */
         if (cat240[0] != 0xf0)
             goto error;
-    
+
         len = AV_RB16(&cat240[1]);
         fspec = AV_RB16(&cat240[3]); /* 1 or 2 octets */
-        
+
         msg_buf = av_malloc(len);
         if (avio_read(pb, msg_buf, len) != len)
             goto error;
 
         if (parse_cat240_videomessage(s, msg_buf, len, &msg) < 0)
             goto error;
-        
+
         av_free(msg_buf);
     }
 
@@ -112,9 +112,9 @@ static int asterix_read_header(AVFormatContext *s)
     st->start_time = 0;
     st->duration = 0;
     av_log(s, AV_LOG_INFO, "opening asterix file. Stream index %d\n", st->index);
-    
+
     return 0;
-    
+
 error:
     av_free(msg_buf);
     return AVERROR(EIO);
@@ -131,8 +131,10 @@ static int asterix_read_packet(AVFormatContext *s, AVPacket *pkt)
     /* read Video Data Block */
     while ((ret = avio_read(pb, cat240, sizeof(cat240))) > 0) {
 
-        if (ret != sizeof(cat240) || cat240[0] != 0xf0)
+        if (ret != sizeof(cat240) || cat240[0] != 0xf0) {
+            av_log(s, AV_LOG_ERROR, "Separator 0xf0 not found at %"PRId64"\n", avio_tell(pb));
             return AVERROR(EIO);
+        }
 
         /* We except Standard UAP format with FSPEC size 2 */
         len = AV_RB16(&cat240[1]);
@@ -141,14 +143,17 @@ static int asterix_read_packet(AVFormatContext *s, AVPacket *pkt)
         messagetype = cat240[7];
 
         /* rewind to beginning of message */
-        if (avio_seek(pb, -1 * sizeof(cat240), SEEK_CUR) < 0)
+        if (avio_seek(pb, -1 * sizeof(cat240), SEEK_CUR) < 0) {
+            av_log(s, AV_LOG_ERROR, "Unable to rewind to header after reading message type at %"PRId64"\n",
+                   avio_tell(pb));
             return AVERROR(EIO);
+        }
 
         /* must be Video Message 002 (Video Summary is 001) */
         if (messagetype == 002) {
 
             double elapsed;
-            
+
             /* process Time of Day (len = 3) */
             char todbuf[4];
             uint32_t tod = 0;
@@ -161,17 +166,21 @@ static int asterix_read_packet(AVFormatContext *s, AVPacket *pkt)
             if (ctx->start_tod == -1)
                 ctx->start_tod = tod;
 
-            if (avio_seek(pb, -len, SEEK_CUR) < 0)
+            if (avio_seek(pb, -len, SEEK_CUR) < 0) {
+                av_log(s, AV_LOG_ERROR, "Unable to rewind to header after reading timestamp at %"PRId64"\n", avio_tell(pb));
                 return AVERROR(EIO);
-            
-            if (av_get_packet(s->pb, pkt, len) != len)
+            }
+
+            if (av_get_packet(s->pb, pkt, len) != len) {
+                av_log(s, AV_LOG_ERROR, "Unable to read full packet from %"PRId64"\n", avio_tell(pb));
                 return AVERROR_EOF;
+            }
 
             pkt->stream_index = 0;
 
             elapsed = (tod - ctx->start_tod) / 128.;
             /* elapsed *= 10.; */
-            
+
             av_log(s, AV_LOG_DEBUG, "Duration: %g, Framerate %g\n",
                    elapsed, av_q2d(s->streams[pkt->stream_index]->time_base));
 
@@ -182,16 +191,19 @@ static int asterix_read_packet(AVFormatContext *s, AVPacket *pkt)
                 pkt->pts = ++ctx->last_pts;
                 ++pkt->duration;
             }
-            
+
             av_log(s, AV_LOG_DEBUG, "PTS %d, DTS %d\n", (int)pkt->pts, (int)pkt->dts);
 
             s->streams[pkt->stream_index]->duration++;
             return len;
         }
 
-        if (avio_seek(pb, len, SEEK_CUR) < 0)
+        if (avio_seek(pb, len, SEEK_CUR) < 0) {
+            av_log(s, AV_LOG_ERROR, "Unable to rewind to header start from %"PRId64"\n", avio_tell(pb));
             return AVERROR(EIO);
+        }
     }
+
     return ret;
 }
 

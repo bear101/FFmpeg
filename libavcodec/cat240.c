@@ -27,7 +27,9 @@
 #include <libavutil/avassert.h>
 #include <libavutil/intreadwrite.h>
 
+#if CONFIG_ZLIB
 #include <zlib.h>
+#endif
 #include <math.h>
 
 #define ASTERIX_AZIMUTH_RESOLUTION 0x10000
@@ -155,6 +157,7 @@ static av_cold int cat240_decode_end(AVCodecContext *avctx)
     return 0;
 }
 
+#if CONFIG_ZLIB
 static int decompress_videoblocks(AVCodecContext *avctx, const uint8_t* buf, int size)
 {
     int ret;
@@ -177,6 +180,7 @@ static int decompress_videoblocks(AVCodecContext *avctx, const uint8_t* buf, int
 
     return ret == Z_STREAM_END ? sizeof(ctx->decompress_buf) - strm.avail_out : AVERROR_INVALIDDATA;
 }
+#endif
 
 static int cat240_draw_slice(AVCodecContext *avctx, uint16_t start_az,
                              uint16_t end_az, const uint8_t* sweep_data)
@@ -233,8 +237,13 @@ static int cat240_decode_frame(AVCodecContext *avctx,
         return ret;
 
     if (msg.vcr_dci & 0x8000) {
+#if CONFIG_ZLIB
         range = decompress_videoblocks(avctx, msg.data, msg.nb_vb);
         video_uncompressed = ctx->decompress_buf;
+#else
+        av_log(avctx, AV_LOG_ERROR, "zlib compressed video received but not enabled in FFmpeg compilation\n");
+        return AVERROR_INVALIDDATA;
+#endif
     } else {
         range = msg.nb_vb;
         video_uncompressed = msg.data;
