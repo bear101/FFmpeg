@@ -21,6 +21,8 @@
  */
 
 #include "asterix.h"
+#include "avio_internal.h"
+
 #include <libavutil/rational.h>
 #include <libavutil/intreadwrite.h>
 #include <libavcodec/cat240.h>
@@ -44,8 +46,9 @@ typedef struct AsterixContext {
 
 static int asterix_probe(AVProbeData *p)
 {
-    if (p->filename && strstr(p->filename, ".asterix"))
+    if (p->filename && strstr(p->filename, ".asterix")) {
         return AVPROBE_SCORE_MAX;
+    }
 
     av_log(p, AV_LOG_INFO, "opening asterix file %s\n", p->filename);
     return 0;
@@ -65,7 +68,8 @@ static int asterix_read_header(AVFormatContext *s)
     AVRational fps = {1, 30};
     uint8_t cat240[5], *msg_buf = 0;
     Cat240VideoMessage msg;
-    uint16_t len, fspec;
+    uint16_t len;
+    int ret;
 
     memset(&msg, 0, sizeof(msg));
 
@@ -85,8 +89,12 @@ static int asterix_read_header(AVFormatContext *s)
             goto error;
 
         len = AV_RB16(&cat240[1]);
-        fspec = AV_RB16(&cat240[3]); /* 1 or 2 octets */
 
+        if ((ret = ffio_ensure_seekback(pb, len)) < 0) {
+            av_log(s, AV_LOG_ERROR, "Failed to enable seek back when parsing header. Error: %d\n", ret);
+            return ret;
+        }
+        
         msg_buf = av_malloc(len);
         if (avio_read(pb, msg_buf, len) != len)
             goto error;
@@ -142,11 +150,19 @@ static int asterix_read_packet(AVFormatContext *s, AVPacket *pkt)
         datasource = AV_RB16(&cat240[5]);
         messagetype = cat240[7];
 
+        av_log(s, AV_LOG_DEBUG, "Field Specification: 0x%"PRIx16"Data Source Identifier 0x%"PRIx16"\n",
+               fspec, datasource);
+        
+        if ((ret = ffio_ensure_seekback(pb, len)) < 0) {
+            av_log(s, AV_LOG_ERROR, "Failed to enable seek back at %"PRId64". Error: %d\n",
+                   avio_tell(pb), ret);
+        }
+
         /* rewind to beginning of message */
-        if (avio_seek(pb, -1 * sizeof(cat240), SEEK_CUR) < 0) {
-            av_log(s, AV_LOG_ERROR, "Unable to rewind to header after reading message type at %"PRId64"\n",
-                   avio_tell(pb));
-            return AVERROR(EIO);
+        if ((ret = avio_seek(pb, -1 * sizeof(cat240), SEEK_CUR)) < 0) {
+            av_log(s, AV_LOG_ERROR, "Unable to rewind to header after reading message type at %"PRId64". Error: %d\n",
+                   avio_tell(pb), ret);
+            return ret;
         }
 
         /* must be Video Message 002 (Video Summary is 001) */
@@ -166,14 +182,14 @@ static int asterix_read_packet(AVFormatContext *s, AVPacket *pkt)
             if (ctx->start_tod == -1)
                 ctx->start_tod = tod;
 
-            if (avio_seek(pb, -len, SEEK_CUR) < 0) {
-                av_log(s, AV_LOG_ERROR, "Unable to rewind to header after reading timestamp at %"PRId64"\n", avio_tell(pb));
-                return AVERROR(EIO);
+            if ((ret = avio_seek(pb, -len, SEEK_CUR)) < 0) {
+                av_log(s, AV_LOG_ERROR, "Unable to rewind %"PRIu16" bytes to header after reading timestamp at %"PRId64". Error: %d. Now skipping %"PRIu16" bytes\n", len, avio_tell(pb), ret, len);
+                return ret;
             }
 
-            if (av_get_packet(s->pb, pkt, len) != len) {
-                av_log(s, AV_LOG_ERROR, "Unable to read full packet from %"PRId64"\n", avio_tell(pb));
-                return AVERROR_EOF;
+            if ((ret = av_get_packet(s->pb, pkt, len)) != len) {
+                av_log(s, AV_LOG_ERROR, "Unable to read full packet from %"PRId64". Error: %d\n", avio_tell(pb), ret);
+                return ret;
             }
 
             pkt->stream_index = 0;
@@ -198,9 +214,9 @@ static int asterix_read_packet(AVFormatContext *s, AVPacket *pkt)
             return len;
         }
 
-        if (avio_seek(pb, len, SEEK_CUR) < 0) {
+        if ((ret = avio_skip(pb, len)) < 0) {
             av_log(s, AV_LOG_ERROR, "Unable to rewind to header start from %"PRId64"\n", avio_tell(pb));
-            return AVERROR(EIO);
+            return ret;
         }
     }
 
