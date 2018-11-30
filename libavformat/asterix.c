@@ -25,6 +25,7 @@
 
 #include <libavutil/rational.h>
 #include <libavutil/intreadwrite.h>
+#include <libavutil/opt.h>
 #include <libavcodec/cat240.h>
 #include <string.h>
 
@@ -42,6 +43,7 @@
 typedef struct AsterixContext {
     uint32_t start_tod; /* 24-bit */
     int64_t last_pts;
+    int frame_rate;
 } AsterixContext;
 
 static int asterix_probe(AVProbeData *p)
@@ -76,6 +78,10 @@ static int asterix_read_header(AVFormatContext *s)
     ctx->start_tod = -1;
     ctx->last_pts = 0;
 
+    if (ctx->frame_rate <= 0) {
+        ctx->frame_rate = fps.den;
+    }
+
     while (msg.nb_cells == 0) {
 
         if (avio_read(pb, cat240, sizeof(cat240)) != sizeof(cat240))
@@ -94,7 +100,7 @@ static int asterix_read_header(AVFormatContext *s)
             av_log(s, AV_LOG_ERROR, "Failed to enable seek back when parsing header. Error: %d\n", ret);
             return ret;
         }
-        
+
         msg_buf = av_malloc(len);
         if (avio_read(pb, msg_buf, len) != len)
             goto error;
@@ -152,7 +158,7 @@ static int asterix_read_packet(AVFormatContext *s, AVPacket *pkt)
 
         av_log(s, AV_LOG_DEBUG, "Field Specification: 0x%"PRIx16"Data Source Identifier 0x%"PRIx16"\n",
                fspec, datasource);
-        
+
         if ((ret = ffio_ensure_seekback(pb, len)) < 0) {
             av_log(s, AV_LOG_ERROR, "Failed to enable seek back at %"PRId64". Error: %d\n",
                    avio_tell(pb), ret);
@@ -228,6 +234,27 @@ static int asterix_read_close(AVFormatContext *s)
     return 0;
 }
 
+#define OFFSET(x) offsetof(AsterixContext, x)
+static const AVOption demux_options[] = {
+    { .name   = "frame_rate",
+      .help   = "Frame rate",
+      .offset = OFFSET(frame_rate),
+      .type   = AV_OPT_TYPE_INT,
+      { .i64  = -1 },
+      .min    = -1,
+      .max    = INT_MAX,
+      .flags  = AV_OPT_FLAG_DECODING_PARAM,
+      .unit   = NULL },
+    { NULL },
+};
+
+static const AVClass asterix_demuxer_class = {
+    .class_name = "Asterix demuxer",
+    .item_name  = av_default_item_name,
+    .option     = demux_options,
+    .version    = LIBAVUTIL_VERSION_INT
+};
+
 AVInputFormat ff_asterix_demuxer = {
     .name           = "asterix",
     .long_name      = NULL_IF_CONFIG_SMALL("ASTERIX Radar Video (Eurocontrol Category 240)"),
@@ -240,4 +267,5 @@ AVInputFormat ff_asterix_demuxer = {
     .extensions     = "asterix",
     .flags          = AVFMT_GENERIC_INDEX,
     /* .codec_tag      = (const AVCodecTag* const []){ff_codec_asterix_tags, 0}, */
+    /* .priv_class     = &asterix_demuxer_class, */
 };
