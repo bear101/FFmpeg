@@ -26,6 +26,7 @@
 #include <libavutil/rational.h>
 #include <libavutil/avassert.h>
 #include <libavutil/intreadwrite.h>
+#include <libavutil/opt.h>
 
 #if CONFIG_ZLIB
 #include <zlib.h>
@@ -35,6 +36,7 @@
 #define ASTERIX_AZIMUTH_RESOLUTION 0x10000
 
 typedef struct Cat240Context {
+    AVClass *class;
     uint8_t decompress_buf[0x10000]; /* TODO: Should be dynamically
                                       * allocated based on Video Block
                                       * Low/Medium/High Data Volume,
@@ -43,6 +45,10 @@ typedef struct Cat240Context {
     AVFrame *frame;
     int keyframe_az; /* key frame is one full scan (start_az in
                       * Cat240VideoMessage-struct */
+    int scans; /* Frames are not submitted until a scan has
+                * completed. Normally the frame rate setting
+                * determines when frames are submitted. */
+    int square; /* Draw in top half of square instead of a circle */
 } Cat240Context;
 
 
@@ -72,7 +78,7 @@ int parse_cat240_videomessage(void *avcl, const uint8_t* buf,
            (msg->datasource >> 8), (msg->datasource & 0xff));
 
     /* process Message Type (len = 1) */
-    if (*buf_ptr != 002)
+    if (*buf_ptr != VIDEOSUMMARY_MSGTYPE)
         return 1; /* we only want Video Message type */
 
     buf_ptr += 1;
@@ -144,6 +150,7 @@ static av_cold int cat240_decode_init(AVCodecContext *avctx)
     Cat240Context *ctx = avctx->priv_data;
     ctx->frame = av_frame_alloc();
     ctx->keyframe_az = -1;
+    
     if (!ctx->frame)
         return AVERROR(ENOMEM);
 
@@ -192,16 +199,18 @@ static int cat240_draw_slice(AVCodecContext *avctx, uint16_t start_az,
     int w = (end_az - start_az + ASTERIX_AZIMUTH_RESOLUTION) % ASTERIX_AZIMUTH_RESOLUTION;
 
     while (--w >= 0) {
-        double a = ((start_az + w) % ASTERIX_AZIMUTH_RESOLUTION) / (double)ASTERIX_AZIMUTH_RESOLUTION;
+        int r;
+        double a = ((start_az + w) % ASTERIX_AZIMUTH_RESOLUTION) / (double)ASTERIX_AZIMUTH_RESOLUTION, s, c;
         angle = M_PI * 2. * -a + M_PI;
-        double s = sin(angle), c = cos(angle);
+        s = sin(angle);
+        c = cos(angle);
 
         /* int x_max = s * avctx->width/2; */
         /* int y_max = c * avctx->width/2; */
 
         /* av_log(avctx, AV_LOG_DEBUG, "Angle: %g, Deg: %g, max x=%d,y=%d\n", angle, 360.0 * a, x_max, y_max); */
 
-        int r = avctx->width/2;
+        r = avctx->width/2;
         while (--r >= 0) {
             int x = s * r;
             int y = c * r;
@@ -231,7 +240,7 @@ static int cat240_decode_frame(AVCodecContext *avctx,
     int framesize;
     int range;
     Cat240VideoMessage msg;
-    
+
     ret = parse_cat240_videomessage(avctx, avpkt->data, avpkt->size, &msg);
     if (ret < 0)
         return ret;
@@ -262,9 +271,7 @@ static int cat240_decode_frame(AVCodecContext *avctx,
     framedata = ctx->frame->data[0];
     framesize = ctx->frame->height * ctx->frame->linesize[0];
 
-    static int draw_slice = 1;
-
-    if (draw_slice) {
+    if (!ctx->square) {
         cat240_draw_slice(avctx, msg.start_az, msg.end_az, video_uncompressed);
     } else {
         x = msg.start_az / (ASTERIX_AZIMUTH_RESOLUTION / avctx->width);
@@ -284,15 +291,55 @@ static int cat240_decode_frame(AVCodecContext *avctx,
         ctx->keyframe_az = msg.start_az;
     }
 
-    if (avpkt->pts == avpkt->dts)
+    /* Don't forward to decoder if time is unchanged and we're not
+     * waiting for a complete scan */
+    if (avpkt->pts == avpkt->dts && !ctx->scans)
         return framesize;
 
-    if ((ret = av_frame_ref(data, ctx->frame)) < 0)
-        return ret;
+    /* Process a full scan */
+    if (ctx->scans && !ctx->frame->key_frame) {
+        return framesize;
+    }
 
+    if ((ret = av_frame_ref(data, ctx->frame)) < 0) {
+        return ret;
+    }
+    
     *got_frame = 1;
+
     return framesize;
 }
+
+static const AVOption decoder_options[] = {
+    { .name   = "scan",
+      .help   = "Submit frame when scan completes. Default is to submit frames based on FPS setting.",
+      .offset = offsetof(Cat240Context, scans),
+      .type   = AV_OPT_TYPE_BOOL,
+      { .i64  = 0 },
+      .min    = 0,
+      .max    = 1,
+      .flags  = AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_DECODING_PARAM,
+      .unit   = NULL },
+    
+    { .name   = "square",
+      .help   = "Draw square instead of circle",
+      .offset = offsetof(Cat240Context, square),
+      .type   = AV_OPT_TYPE_BOOL,
+      { .i64  = 0 },
+      .min    = 0,
+      .max    = 1,
+      .flags  = AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_DECODING_PARAM,
+      .unit   = NULL },
+    
+    { NULL },
+};
+
+static const AVClass cat240_decoder_class = {
+    .class_name = "CAT240 decoder",
+    .item_name  = av_default_item_name,
+    .option     = decoder_options,
+    .version    = LIBAVUTIL_VERSION_INT,
+};
 
 AVCodec ff_cat240_decoder = {
     .name           = "cat240",
@@ -304,4 +351,5 @@ AVCodec ff_cat240_decoder = {
     .decode         = cat240_decode_frame,
     .close          = cat240_decode_end,
     .capabilities   = AV_CODEC_CAP_DR1,
+    .priv_class     = &cat240_decoder_class,
 };

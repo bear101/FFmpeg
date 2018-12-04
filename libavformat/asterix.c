@@ -126,7 +126,6 @@ static int asterix_read_header(AVFormatContext *s)
     st->time_base = fps;
     st->start_time = 0;
     st->duration = 0;
-    av_log(s, AV_LOG_INFO, "opening asterix file. Stream index %d\n", st->index);
 
     return 0;
 
@@ -173,7 +172,7 @@ static int asterix_read_packet(AVFormatContext *s, AVPacket *pkt)
         }
 
         /* must be Video Message 002 (Video Summary is 001) */
-        if (messagetype == 002) {
+        if (messagetype == VIDEOSUMMARY_MSGTYPE) {
 
             double elapsed;
 

@@ -46,4 +46,5 @@ typedef struct Cat240VideoMessage {
 int parse_cat240_videomessage(void *avcl, const uint8_t* buf, uint16_t len,
                               Cat240VideoMessage* msg);
 
+#define VIDEOSUMMARY_MSGTYPE 002
 #endif
