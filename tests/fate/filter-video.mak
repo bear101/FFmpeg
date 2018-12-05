@@ -89,6 +89,12 @@ fate-filter-allrgb: CMD = framecrc -lavfi allrgb=rate=5:duration=1 -pix_fmt rgb2
 FATE_FILTER-$(call ALLYES, LAVFI_INDEV ALLYUV_FILTER) += fate-filter-allyuv
 fate-filter-allyuv: CMD = framecrc -lavfi allyuv=rate=5:duration=1 -pix_fmt yuv444p
 
+FATE_FILTER-$(call ALLYES, LAVFI_INDEV PAL75BARS_FILTER) += fate-filter-pal75bars
+fate-filter-pal75bars: CMD = framecrc -lavfi pal75bars=rate=5:duration=1 -pix_fmt yuv420p
+
+FATE_FILTER-$(call ALLYES, LAVFI_INDEV PAL100BARS_FILTER) += fate-filter-pal100bars
+fate-filter-pal100bars: CMD = framecrc -lavfi pal100bars=rate=5:duration=1 -pix_fmt yuv420p
+
 FATE_FILTER-$(call ALLYES, LAVFI_INDEV RGBTESTSRC_FILTER) += fate-filter-rgbtestsrc
 fate-filter-rgbtestsrc: CMD = framecrc -lavfi rgbtestsrc=rate=5:duration=1 -pix_fmt rgb24
 
@@ -507,6 +513,9 @@ fate-filter-hue2: CMD = video_filter "perms=random,hue=h=18*n" -frames:v 20
 
 FATE_FILTER_VSYNTH-$(call ALLYES, PERMS_FILTER HUE_FILTER) += fate-filter-hue3
 fate-filter-hue3: CMD = video_filter "perms=random,hue=b=n-10" -frames:v 20
+
+FATE_FILTER_VSYNTH-$(call ALLYES, FORMAT_FILTER PERMS_FILTER HUE_FILTER) += fate-filter-hue4
+fate-filter-hue4: CMD = video_filter "format=yuv422p10,perms=random,hue=h=18*n:s=n/10" -frames:v 20 -pix_fmt yuv422p10le
 
 FATE_FILTER_VSYNTH-$(CONFIG_IDET_FILTER) += fate-filter-idet
 fate-filter-idet: CMD = framecrc -flags bitexact -idct simple -i $(SRC) -vf idet -frames:v 25 -flags +bitexact
