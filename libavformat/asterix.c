@@ -26,6 +26,7 @@
 #include <libavutil/rational.h>
 #include <libavutil/intreadwrite.h>
 #include <libavutil/opt.h>
+#include <libavutil/imgutils.h>
 #include <libavcodec/cat240.h>
 #include <string.h>
 
@@ -53,15 +54,8 @@ static int asterix_probe(AVProbeData *p)
         return AVPROBE_SCORE_MAX;
     }
 
-    av_log(p, AV_LOG_INFO, "opening asterix file %s\n", p->filename);
     return 0;
 }
-
-/* static int asterix_open(URLContext *h, const char *uri, int flags) */
-/* { */
-/*     av_log(p, AV_LOG_INFO, "asterix url open %s\n", uri); */
-/*     return 0; */
-/* } */
 
 static int asterix_read_header(AVFormatContext *s)
 {
@@ -72,6 +66,7 @@ static int asterix_read_header(AVFormatContext *s)
     uint8_t cat240[5], *msg_buf = 0;
     Cat240VideoMessage msg;
     uint16_t len;
+    uint32_t range;
     int ret;
 
     memset(&msg, 0, sizeof(msg));
@@ -119,13 +114,23 @@ static int asterix_read_header(AVFormatContext *s)
     if (!st)
         return AVERROR(ENOMEM);
 
+    range = msg.nb_cells;
+
+    while (av_image_check_size(range * 2, range * 2, AV_LOG_TRACE, s) < 0) {
+        --range;
+    }
+
     st->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
-    st->codecpar->width = st->codecpar->height = msg.nb_cells * 2;
+    st->codecpar->width = st->codecpar->height = range * 2;
     st->codecpar->codec_id = AV_CODEC_ID_CAT240;
     st->codecpar->format = AV_PIX_FMT_RGB32;
     st->time_base = fps;
     st->start_time = 0;
     st->duration = 0;
+
+    if (range != msg.nb_cells) {
+        av_log(s, AV_LOG_WARNING, "Range reduced from %"PRIu32" to %"PRIu32" cells\n", msg.nb_cells, range);
+    }
 
     return 0;
 
@@ -259,7 +264,6 @@ AVInputFormat ff_asterix_demuxer = {
     .name           = "asterix",
     .long_name      = NULL_IF_CONFIG_SMALL("ASTERIX Radar Video (Eurocontrol Category 240)"),
     .read_probe     = asterix_probe,
-    /* .url_open       = asterix_open, */
     .priv_data_size = sizeof(AsterixContext),
     .read_header    = asterix_read_header,
     .read_packet    = asterix_read_packet,

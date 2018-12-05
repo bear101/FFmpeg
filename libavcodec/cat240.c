@@ -190,7 +190,7 @@ static int decompress_videoblocks(AVCodecContext *avctx, const uint8_t* buf, int
 #endif
 
 static int cat240_draw_slice(AVCodecContext *avctx, uint16_t start_az,
-                             uint16_t end_az, const uint8_t* sweep_data)
+                             uint16_t end_az, const uint8_t* sweep_data, int sweep_len)
 {
     Cat240Context *ctx = avctx->priv_data;
     uint8_t *framedata = ctx->frame->data[0];
@@ -211,6 +211,7 @@ static int cat240_draw_slice(AVCodecContext *avctx, uint16_t start_az,
         /* av_log(avctx, AV_LOG_DEBUG, "Angle: %g, Deg: %g, max x=%d,y=%d\n", angle, 360.0 * a, x_max, y_max); */
 
         r = avctx->width/2;
+        r = r > sweep_len? sweep_len : r;
         while (--r >= 0) {
             int x = s * r;
             int y = c * r;
@@ -272,10 +273,11 @@ static int cat240_decode_frame(AVCodecContext *avctx,
     framesize = ctx->frame->height * ctx->frame->linesize[0];
 
     if (!ctx->square) {
-        cat240_draw_slice(avctx, msg.start_az, msg.end_az, video_uncompressed);
+        cat240_draw_slice(avctx, msg.start_az, msg.end_az, video_uncompressed, msg.nb_cells);
     } else {
+        int range_max = range > avctx->height / 2? avctx->height / 2 : range;
         x = msg.start_az / (ASTERIX_AZIMUTH_RESOLUTION / avctx->width);
-        for (y = 0;y < range; y++) {
+        for (y = 0;y < range_max; y++) {
             int pos = ctx->frame->linesize[0] * y + x * 4;
             framedata[pos] = 0;
             framedata[pos+1] = video_uncompressed[y];
