@@ -123,7 +123,7 @@ static int asterix_read_header(AVFormatContext *s)
     st->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
     st->codecpar->width = st->codecpar->height = range * 2;
     st->codecpar->codec_id = AV_CODEC_ID_CAT240;
-    st->codecpar->format = AV_PIX_FMT_RGB32;
+    st->codecpar->format = AV_PIX_FMT_RGB24;
     st->time_base = fps;
     st->start_time = 0;
     st->duration = 0;
