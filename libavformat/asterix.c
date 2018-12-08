@@ -184,10 +184,17 @@ static int asterix_read_packet(AVFormatContext *s, AVPacket *pkt)
             /* process Time of Day (len = 3) */
             char todbuf[4];
             uint32_t tod = 0;
-            if (avio_seek(pb, len - 3, SEEK_CUR) > 0 &&
-                avio_read(pb, todbuf, 3) > 0) {
-                tod = AV_RB24(todbuf);
-                av_log(s, AV_LOG_DEBUG, "Time of Day: %u\n", (unsigned)tod);
+            if ((ret = avio_seek(pb, len - 3, SEEK_CUR)) > 0) {
+                if ((ret = avio_read(pb, todbuf, 3)) > 0) {
+                    tod = AV_RB24(todbuf);
+                    av_log(s, AV_LOG_DEBUG, "Time of Day: %u\n", (unsigned)tod);
+                } else {
+                    av_log(s, AV_LOG_ERROR, "Failed to read time of day\n");
+                    return ret;
+                }
+            } else {
+                av_log(s, AV_LOG_ERROR, "Failed to seek %"PRId32" bytes to time of day at %"PRIi64"\n", len - 3, avio_tell(pb));
+                return ret;
             }
 
             if (ctx->start_tod == -1)
