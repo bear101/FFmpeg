@@ -161,7 +161,7 @@ static int asterix_read_packet(AVFormatContext *s, AVPacket *pkt)
         datasource = AV_RB16(&cat240[5]);
         messagetype = cat240[7];
 
-        av_log(s, AV_LOG_DEBUG, "Field Specification: 0x%"PRIx16"Data Source Identifier 0x%"PRIx16"\n",
+        av_log(s, AV_LOG_DEBUG, "Field Specification: 0x%"PRIx16". Data Source Identifier 0x%"PRIx16".\n",
                fspec, datasource);
 
         if ((ret = ffio_ensure_seekback(pb, len)) < 0) {
