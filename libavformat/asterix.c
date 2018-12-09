@@ -143,72 +143,52 @@ static int asterix_read_packet(AVFormatContext *s, AVPacket *pkt)
 {
     AsterixContext* ctx = s->priv_data;
     AVIOContext *pb = s->pb;
-    uint8_t cat240[8], messagetype;
+    uint8_t cat240_hdr = 8, messagetype;
     uint16_t len, fspec, datasource;
     int ret;
 
     /* read Video Data Block */
-    while ((ret = avio_read(pb, cat240, sizeof(cat240))) > 0) {
+    while ((ret = av_append_packet(pb, pkt, cat240_hdr)) > 0) {
 
-        if (ret != sizeof(cat240) || cat240[0] != 0xf0) {
+        if (ret != cat240_hdr) {
+            av_log(s, AV_LOG_ERROR, "Failed to read header: %d\n", ret);
+            return AVERROR(EIO);
+        }
+
+        if (pkt->data[0] != 0xf0) {
             av_log(s, AV_LOG_ERROR, "Separator 0xf0 not found at %"PRId64"\n", avio_tell(pb));
             return AVERROR(EIO);
         }
 
         /* We except Standard UAP format with FSPEC size 2 */
-        len = AV_RB16(&cat240[1]);
-        fspec = AV_RB16(&cat240[3]);
-        datasource = AV_RB16(&cat240[5]);
-        messagetype = cat240[7];
+        len = AV_RB16(&pkt->data[1]);
+        fspec = AV_RB16(&pkt->data[3]);
+        datasource = AV_RB16(&pkt->data[5]);
+        messagetype = pkt->data[7];
 
-        av_log(s, AV_LOG_DEBUG, "Field Specification: 0x%"PRIx16". Data Source Identifier 0x%"PRIx16".\n",
-               fspec, datasource);
+        av_log(s, AV_LOG_DEBUG, "Field Specification: 0x%"PRIx16". Data Source Identifier 0x%"PRIx16". Message type: %"PRIu8", len=%"PRIu16"\n",
+               fspec, datasource, messagetype, len);
 
-        if ((ret = ffio_ensure_seekback(pb, len)) < 0) {
-            av_log(s, AV_LOG_ERROR, "Failed to enable seek back at %"PRId64". Error: %d\n",
-                   avio_tell(pb), ret);
-        }
-
-        /* rewind to beginning of message */
-        if ((ret = avio_seek(pb, -1 * sizeof(cat240), SEEK_CUR)) < 0) {
-            av_log(s, AV_LOG_ERROR, "Unable to rewind to header after reading message type at %"PRId64". Error: %d\n",
-                   avio_tell(pb), ret);
+        if ((ret = av_append_packet(pb, pkt, len - cat240_hdr)) < 0) {
+            av_log(s, AV_LOG_ERROR, "Failed to read full packet. Error: %d\n", ret);
             return ret;
         }
 
+        if ((ret = av_append_packet(pb, pkt, 0)) < 0) {
+            av_log(s, AV_LOG_ERROR, "Failed to submit packet. Error: %d. %s\n", ret, av_err2str(ret));
+            return ret;
+        }
+        
         /* must be Video Message 002 (Video Summary is 001) */
         if (messagetype == VIDEOSUMMARY_MSGTYPE) {
 
             double elapsed;
 
             /* process Time of Day (len = 3) */
-            char todbuf[4];
-            uint32_t tod = 0;
-            if ((ret = avio_seek(pb, len - 3, SEEK_CUR)) > 0) {
-                if ((ret = avio_read(pb, todbuf, 3)) > 0) {
-                    tod = AV_RB24(todbuf);
-                    av_log(s, AV_LOG_DEBUG, "Time of Day: %u\n", (unsigned)tod);
-                } else {
-                    av_log(s, AV_LOG_ERROR, "Failed to read time of day\n");
-                    return ret;
-                }
-            } else {
-                av_log(s, AV_LOG_ERROR, "Failed to seek %"PRId32" bytes to time of day at %"PRIi64"\n", len - 3, avio_tell(pb));
-                return ret;
-            }
+            uint32_t tod = AV_RB24(&pkt->data[len - 3]);
 
             if (ctx->start_tod == -1)
                 ctx->start_tod = tod;
-
-            if ((ret = avio_seek(pb, -len, SEEK_CUR)) < 0) {
-                av_log(s, AV_LOG_ERROR, "Unable to rewind %"PRIu16" bytes to header after reading timestamp at %"PRId64". Error: %d. Now skipping %"PRIu16" bytes\n", len, avio_tell(pb), ret, len);
-                return ret;
-            }
-
-            if ((ret = av_get_packet(s->pb, pkt, len)) != len) {
-                av_log(s, AV_LOG_ERROR, "Unable to read full packet from %"PRId64". Error: %d\n", avio_tell(pb), ret);
-                return ret;
-            }
 
             pkt->stream_index = 0;
 
@@ -229,13 +209,14 @@ static int asterix_read_packet(AVFormatContext *s, AVPacket *pkt)
             av_log(s, AV_LOG_DEBUG, "PTS %d, DTS %d\n", (int)pkt->pts, (int)pkt->dts);
 
             s->streams[pkt->stream_index]->duration++;
-            return len;
+        } else {
+            pkt->stream_index = 0;
+            pkt->duration = 0;
+            pkt->pts = ctx->last_pts;
+            pkt->dts = ctx->last_pts;
         }
-
-        if ((ret = avio_skip(pb, len)) < 0) {
-            av_log(s, AV_LOG_ERROR, "Unable to rewind to header start from %"PRId64"\n", avio_tell(pb));
-            return ret;
-        }
+        
+        return len;
     }
 
     return ret;

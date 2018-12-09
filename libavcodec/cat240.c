@@ -244,7 +244,7 @@ static int cat240_decode_frame(AVCodecContext *avctx,
     Cat240VideoMessage msg;
 
     ret = parse_cat240_videomessage(avctx, avpkt->data, avpkt->size, &msg);
-    if (ret < 0)
+    if (ret != 0)
         return ret;
 
     if (msg.vcr_dci & 0x8000) {
