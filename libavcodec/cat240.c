@@ -45,6 +45,11 @@ typedef struct Cat240Context {
     AVFrame *frame;
     int keyframe_az; /* key frame is one full scan (start_az in
                       * Cat240VideoMessage-struct */
+    int keyframe_ignore; /* boolean value used for detecting a full
+                          * scan. The same azimuth (keyframe_az) may
+                          * not occur again so we detect new scans by
+                          * ignoring azimuth values for half a
+                          * rotation (0x10000/2). */
     int scans; /* Frames are not submitted until a scan has
                 * completed. Normally the frame rate setting
                 * determines when frames are submitted. */
@@ -288,12 +293,17 @@ static int cat240_decode_frame(AVCodecContext *avctx,
         }
     }
 
-    /* mark as key frame if a full scan has completed */
-    ctx->frame->key_frame = ctx->keyframe_az == (int)msg.start_az;
+    ctx->frame->key_frame = 0;
 
     if (ctx->keyframe_az == -1) {
         ctx->keyframe_az = msg.start_az;
+    } else {
+        /* mark as key frame if a full scan has completed */
+        if (!ctx->keyframe_ignore) {
+            ctx->frame->key_frame = ((int16_t)((uint16_t)msg.start_az - (uint16_t)ctx->keyframe_az)) >= 0;
+        }
     }
+    ctx->keyframe_ignore = ((int16_t)((uint16_t)msg.start_az - (uint16_t)ctx->keyframe_az)) >= 0;
 
     /* Don't forward to decoder if time is unchanged and we're not
      * waiting for a complete scan */
